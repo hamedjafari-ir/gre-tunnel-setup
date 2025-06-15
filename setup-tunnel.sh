@@ -9,99 +9,98 @@
 # ---------------------------------------------------------------
 set -e
 
-function check_and_install_tools() {
-  echo "Checking required packages..."
-  REQUIRED_TOOLS=("ip" "ping6" "iptables" "sysctl")
-
-  if command -v apt >/dev/null 2>&1; then
-    INSTALL_CMD="apt update && apt install -y"
-  elif command -v yum >/dev/null 2>&1; then
-    INSTALL_CMD="yum install -y"
-  else
-    echo "No supported package manager found (apt or yum required)."
-    exit 1
-  fi
-
-  for tool in "${REQUIRED_TOOLS[@]}"; do
-    if ! command -v $tool >/dev/null 2>&1; then
-      echo "Installing: $tool"
-      eval "$INSTALL_CMD $tool"
-    fi
+function show_loader() {
+  local pid=$!
+  local spin='-\|/'
+  local i=0
+  while kill -0 $pid 2>/dev/null; do
+    i=$(( (i+1) %4 ))
+    printf "\r[%c] Working..." "${spin:$i:1}"
+    sleep 0.2
   done
+  echo -e "\r[✓] Done         "
 }
 
-function restart_server() {
-  echo "Restarting server..."
-  reboot
+function run_remote() {
+  local user=$1
+  local host=$2
+  local cmd=$3
+  ssh -o StrictHostKeyChecking=no $user@$host "$cmd"
 }
 
-function setup_manual() {
-  echo "You selected MANUAL mode."
-  echo "Please connect to each server manually and run the respective commands."
-  echo "Refer to documentation for all steps."
-  read -p "Press Enter to return to menu..."
+function check_and_install_tools() {
+  echo "Checking required tools on local (Iran) server..."
+  (
+    if ! command -v ip >/dev/null; then sudo apt update && sudo apt install -y iproute2; fi
+    if ! command -v ping6 >/dev/null; then sudo apt install -y iputils-ping; fi
+    if ! command -v iptables >/dev/null; then sudo apt install -y iptables; fi
+  ) & show_loader
 }
 
 function setup_auto() {
   echo "Automatic tunnel setup selected."
-  read -p "Enter Iran Server IPv4: " IP_IRAN
+
   read -p "Enter Kharej Server IPv4: " IP_KHAREJ
-  read -p "Enter Iran Server SSH Username (usually root): " USER_IRAN
-  read -p "Enter Kharej Server SSH Username (usually root): " USER_KHAREJ
+  read -p "Enter Iran Server IPv4 (current system IP): " IP_IRAN
+  read -p "Enter Kharej SSH username (e.g., root): " USER_KHAREJ
+  echo "Enter password for $USER_KHAREJ@$IP_KHAREJ (will be used automatically for all remote steps):"
+  read -s PASS_KHAREJ
 
-  echo "Installing required tools on both servers..."
-  ssh $USER_IRAN@$IP_IRAN "$(typeset -f check_and_install_tools); check_and_install_tools"
-  ssh $USER_KHAREJ@$IP_KHAREJ "$(typeset -f check_and_install_tools); check_and_install_tools"
+  check_and_install_tools
 
-  echo "Setting up 6to4 tunnel on Iran server..."
-  ssh $USER_IRAN@$IP_IRAN <<EOF
-ip tunnel add 6to4_To_KH mode sit remote $IP_KHAREJ local $IP_IRAN 2>/dev/null || true
-ip -6 addr add fde8:b030:25cf::de01/64 dev 6to4_To_KH 2>/dev/null || true
-ip link set 6to4_To_KH mtu 1480
-ip link set 6to4_To_KH up
-EOF
+  echo "[Step 1] Setting up 6to4 tunnel on Iran server..."
+  (
+    ip tunnel add 6to4_To_KH mode sit remote $IP_KHAREJ local $IP_IRAN 2>/dev/null || true
+    ip -6 addr add fde8:b030:25cf::de01/64 dev 6to4_To_KH 2>/dev/null || true
+    ip link set 6to4_To_KH mtu 1480
+    ip link set 6to4_To_KH up
+  ) & show_loader
 
-  echo "Setting up 6to4 tunnel on Kharej server..."
-  ssh $USER_KHAREJ@$IP_KHAREJ <<EOF
-ip tunnel add 6to4_To_IR mode sit remote $IP_IRAN local $IP_KHAREJ 2>/dev/null || true
-ip -6 addr add fde8:b030:25cf::de02/64 dev 6to4_To_IR 2>/dev/null || true
-ip link set 6to4_To_IR mtu 1480
-ip link set 6to4_To_IR up
-EOF
+  echo "[Step 2] Setting up 6to4 tunnel on Kharej server..."
+  (
+    sshpass -p "$PASS_KHAREJ" ssh -o StrictHostKeyChecking=no $USER_KHAREJ@$IP_KHAREJ "
+      ip tunnel add 6to4_To_IR mode sit remote $IP_IRAN local $IP_KHAREJ 2>/dev/null || true
+      ip -6 addr add fde8:b030:25cf::de02/64 dev 6to4_To_IR 2>/dev/null || true
+      ip link set 6to4_To_IR mtu 1480
+      ip link set 6to4_To_IR up
+    "
+  ) & show_loader
 
-  echo "Testing IPv6 connectivity..."
-  ssh $USER_IRAN@$IP_IRAN "ping6 -c 3 fde8:b030:25cf::de02"
-  ssh $USER_KHAREJ@$IP_KHAREJ "ping6 -c 3 fde8:b030:25cf::de01"
+  echo "[Step 3] Testing IPv6 connectivity..."
+  ping6 -c 3 fde8:b030:25cf::de02 & show_loader
+  sshpass -p "$PASS_KHAREJ" ssh $USER_KHAREJ@$IP_KHAREJ "ping6 -c 3 fde8:b030:25cf::de01" & show_loader
 
-  echo "Setting up GRE6 tunnel on Iran server..."
-  ssh $USER_IRAN@$IP_IRAN <<EOF
-ip -6 tunnel add GRE6Tun_To_KH mode ip6gre remote fde8:b030:25cf::de02 local fde8:b030:25cf::de01 2>/dev/null || true
-ip addr add 172.20.20.1/30 dev GRE6Tun_To_KH
-ip link set GRE6Tun_To_KH mtu 1436
-ip link set GRE6Tun_To_KH up
-EOF
+  echo "[Step 4] Setting up GRE6 tunnel on Iran server..."
+  (
+    ip -6 tunnel add GRE6Tun_To_KH mode ip6gre remote fde8:b030:25cf::de02 local fde8:b030:25cf::de01 2>/dev/null || true
+    ip addr add 172.20.20.1/30 dev GRE6Tun_To_KH
+    ip link set GRE6Tun_To_KH mtu 1436
+    ip link set GRE6Tun_To_KH up
+  ) & show_loader
 
-  echo "Setting up GRE6 tunnel on Kharej server..."
-  ssh $USER_KHAREJ@$IP_KHAREJ <<EOF
-ip -6 tunnel add GRE6Tun_To_IR mode ip6gre remote fde8:b030:25cf::de01 local fde8:b030:25cf::de02 2>/dev/null || true
-ip addr add 172.20.20.2/30 dev GRE6Tun_To_IR
-ip link set GRE6Tun_To_IR mtu 1436
-ip link set GRE6Tun_To_IR up
-EOF
+  echo "[Step 5] Setting up GRE6 tunnel on Kharej server..."
+  (
+    sshpass -p "$PASS_KHAREJ" ssh $USER_KHAREJ@$IP_KHAREJ "
+      ip -6 tunnel add GRE6Tun_To_IR mode ip6gre remote fde8:b030:25cf::de01 local fde8:b030:25cf::de02 2>/dev/null || true
+      ip addr add 172.20.20.2/30 dev GRE6Tun_To_IR
+      ip link set GRE6Tun_To_IR mtu 1436
+      ip link set GRE6Tun_To_IR up
+    "
+  ) & show_loader
 
-  echo "Testing GRE6 tunnel connectivity..."
-  ssh $USER_IRAN@$IP_IRAN "ping -c 3 172.20.20.2"
-  ssh $USER_KHAREJ@$IP_KHAREJ "ping -c 3 172.20.20.1"
+  echo "[Step 6] Test GRE6 tunnel IPv4"
+  ping -c 3 172.20.20.2 & show_loader
+  sshpass -p "$PASS_KHAREJ" ssh $USER_KHAREJ@$IP_KHAREJ "ping -c 3 172.20.20.1" & show_loader
 
-  echo "Enabling IP forwarding and NAT on Iran server..."
-  ssh $USER_IRAN@$IP_IRAN <<EOF
-sysctl -w net.ipv4.ip_forward=1
-iptables -t nat -A PREROUTING -p tcp --dport 22 -j DNAT --to-destination 172.20.20.1
-iptables -t nat -A PREROUTING -j DNAT --to-destination 172.20.20.2
-iptables -t nat -A POSTROUTING -j MASQUERADE
-EOF
+  echo "[Step 7] Enabling NAT & Forwarding on Iran server..."
+  (
+    sysctl -w net.ipv4.ip_forward=1
+    iptables -t nat -A PREROUTING -p tcp --dport 22 -j DNAT --to-destination 172.20.20.1
+    iptables -t nat -A PREROUTING -j DNAT --to-destination 172.20.20.2
+    iptables -t nat -A POSTROUTING -j MASQUERADE
+  ) & show_loader
 
-  echo "✅ Tunnel successfully configured and tested!"
+  echo -e "\n✅ Tunnel successfully configured and verified!"
   read -p "Press Enter to return to menu..."
 }
 
@@ -112,11 +111,21 @@ function about_script() {
   echo " Author      : Hamed Jafari"
   echo " GitHub      : https://github.com/hamedjafari-ir/gre-tunnel-setup"
   echo " Created on  : 2025-06-15"
-  echo " Description : Automates or guides manual setup of"
-  echo "               IPv6 SIT + GRE tunnels between Iran"
-  echo "               and Kharej servers."
+  echo " Description : Automates 6to4 + GRE6 tunnel between"
+  echo "               Iran and Kharej with ping & NAT test"
   echo " License     : MIT"
   echo "=================================================="
+  read -p "Press Enter to return to menu..."
+}
+
+function restart_server() {
+  echo "Rebooting system now..."
+  reboot
+}
+
+function setup_manual() {
+  echo "Manual setup selected."
+  echo "Please follow the documented step-by-step guide."
   read -p "Press Enter to return to menu..."
 }
 
