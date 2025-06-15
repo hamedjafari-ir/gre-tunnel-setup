@@ -25,11 +25,12 @@ function validate_ssh() {
   echo "Checking SSH access to Kharej server..."
   while true; do
     if sshpass -p "$PASS_KHAREJ" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 $USER_KHAREJ@$IP_KHAREJ "echo connected" 2>/dev/null | grep -q connected; then
+      echo "[✓] SSH authentication successful."
       break
     else
       echo "❌ Invalid username or password. Try again."
-      read -p "Username: " USER_KHAREJ
-      read -s -p "Password: " PASS_KHAREJ
+      read -p "Kharej Server SSH Username: " USER_KHAREJ
+      read -s -p "Kharej Server SSH Password: " PASS_KHAREJ
       echo
     fi
   done
@@ -43,12 +44,14 @@ function restart_server() {
 function setup_auto() {
   echo "[Auto Setup - GRE + 6to4 Tunnel]"
   read -p "Kharej Server IPv4: " IP_KHAREJ
-  read -p "Iran Server IPv4 (local): " IP_IRAN
   read -p "Kharej Server SSH Username: " USER_KHAREJ
   read -s -p "Kharej Server SSH Password: " PASS_KHAREJ
   echo
 
   validate_ssh
+
+  IP_IRAN=$(hostname -I | awk '{print $1}')
+  echo "Detected Iran Server IPv4: $IP_IRAN"
 
   echo "[1] Setting up 6to4 tunnel on Iran server..."
   (
@@ -68,7 +71,7 @@ function setup_auto() {
     '
   ) & show_loader
 
-  echo "[3] Testing IPv6 connectivity..."
+  echo "[3] Testing IPv6 connectivity from Iran to Kharej..."
   if ping6 -c 3 fde8:b030:25cf::de02 | grep -q '3 received'; then
     echo "[✓] IPv6 connectivity verified."
   else
