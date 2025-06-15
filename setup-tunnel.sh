@@ -25,7 +25,12 @@ function self_update() {
   else
     echo "Checking for script updates..."
     TMP_SCRIPT=$(mktemp)
-    curl -Ls "$SCRIPT_URL" -o "$TMP_SCRIPT"
+    if ! curl -m 10 -fsSL "$SCRIPT_URL" -o "$TMP_SCRIPT"; then
+      echo "[✗] Failed to download the script from GitHub."
+      echo "Check your internet connection or the GitHub URL."
+      sleep 3
+      return
+    fi
     if ! cmp -s "$TMP_SCRIPT" "$INSTALL_PATH"; then
       echo "Updating script..."
       mv "$TMP_SCRIPT" "$INSTALL_PATH"
@@ -77,10 +82,14 @@ function validate_ssh() {
 
 function check_tunnel_status() {
   echo "[+] Checking GRE6 tunnel connectivity..."
-  if ping -c 2 172.20.20.2 &>/dev/null; then
-    echo "[✓] GRE6 tunnel is up."
+  if ip addr | grep -q "172.20.20.1"; then
+    if ping -c 2 172.20.20.2 &>/dev/null; then
+      echo "[✓] GRE6 tunnel is up."
+    else
+      echo "[✗] GRE6 interface found but ping failed."
+    fi
   else
-    echo "[✗] GRE6 tunnel seems down."
+    echo "[!] GRE6 interface not found. Setup may not be complete."
   fi
 }
 
