@@ -21,6 +21,16 @@ function show_loader() {
   echo -e "\r[✓] Done         "
 }
 
+function check_tools() {
+  echo "Checking required tools..."
+  for cmd in ip ping ping6 iptables sshpass; do
+    if ! command -v $cmd >/dev/null 2>&1; then
+      echo "Installing missing tool: $cmd"
+      apt-get update -qq && apt-get install -y -qq $cmd
+    fi
+  done
+}
+
 function validate_ssh() {
   echo "Checking SSH access to Kharej server..."
   while true; do
@@ -37,15 +47,62 @@ function validate_ssh() {
   done
 }
 
+function setup_manual() {
+  echo "Manual setup selected."
+  echo "Please connect to each server manually and follow the documented step-by-step commands."
+  read -p "Press Enter to return to menu..."
+}
+
+function test_ping() {
+  read -p "Ping direction (1 = Iran -> Kharej, 2 = Kharej -> Iran): " direction
+  if [[ $direction == 1 ]]; then
+    echo "Testing from Iran to Kharej..."
+    ping -c 3 172.20.20.2 && echo "[✓] IPv4 OK" || echo "[✗] IPv4 Failed"
+    ping6 -c 3 fde8:b030:25cf::de02 && echo "[✓] IPv6 OK" || echo "[✗] IPv6 Failed"
+  elif [[ $direction == 2 ]]; then
+    echo "Testing from Kharej to Iran..."
+    read -p "Kharej Server IPv4: " IP_KHAREJ
+    read -p "Username: " USER_KHAREJ
+    read -s -p "Password: " PASS_KHAREJ
+    echo
+    sshpass -p "$PASS_KHAREJ" ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no $USER_KHAREJ@$IP_KHAREJ '
+      ping -c 3 172.20.20.1 && echo "[✓] IPv4 OK" || echo "[✗] IPv4 Failed"
+      ping6 -c 3 fde8:b030:25cf::de01 && echo "[✓] IPv6 OK" || echo "[✗] IPv6 Failed"
+    '
+  else
+    echo "Invalid option."
+  fi
+  read -p "Press Enter to return to menu..."
+}
+
+function restart_server() {
+  echo "Rebooting system..."
+  reboot
+}
+
+function about_script() {
+  clear
+  echo "=================================================="
+  echo " GRE + 6to4 Tunnel Setup Script"
+  echo " Author      : Hamed Jafari"
+  echo " GitHub      : https://github.com/hamedjafari-ir/gre-tunnel-setup"
+  echo " Created on  : 2025-06-15"
+  echo " Description : Automates or guides manual setup of"
+  echo "               IPv6 SIT + GRE tunnels between Iran"
+  echo "               and Kharej servers."
+  echo " License     : MIT"
+  echo "=================================================="
+  read -p "Press Enter to return to menu..."
+}
+
 function setup_auto() {
+  check_tools
   echo "[Auto Setup - GRE + 6to4 Tunnel]"
   read -p "Kharej Server IPv4: " IP_KHAREJ
   read -p "Kharej Server SSH Username: " USER_KHAREJ
   read -s -p "Kharej Server SSH Password: " PASS_KHAREJ
   echo
-
   validate_ssh
-
   IP_IRAN=$(hostname -I | awk '{print $1}')
   echo "Detected Iran Server IPv4: $IP_IRAN"
 
@@ -110,3 +167,30 @@ function setup_auto() {
   echo -e "\n✅ Tunnel has been successfully established."
   read -p "Press Enter to return to menu..."
 }
+
+function menu() {
+  while true; do
+    clear
+    echo "========= GRE + 6to4 Tunnel Setup Script ========="
+    echo "1. Automatic Tunnel Setup (Iran to Kharej)"
+    echo "2. Manual Setup Guide"
+    echo "3. Restart Server"
+    echo "4. Ping Test"
+    echo "5. About This Script"
+    echo "6. Exit"
+    echo "=================================================="
+    read -p "Select an option: " choice
+
+    case $choice in
+      1) setup_auto ;;
+      2) setup_manual ;;
+      3) restart_server ;;
+      4) test_ping ;;
+      5) about_script ;;
+      6) exit ;;
+      *) echo "Invalid option"; sleep 1 ;;
+    esac
+  done
+}
+
+menu
