@@ -1,13 +1,42 @@
 #!/bin/bash
 # ---------------------------------------------------------------
 # Script Name : setup-tunnel.sh
-# Description : Auto/manual setup of 6to4 + GRE IPv6 tunnel
+# Description : Auto/manual setup of 6to4 + GRE IPv6 tunnel with self-update
 # Author      : Hamed Jafari
 # GitHub      : https://github.com/hamedjafari-ir/gre-tunnel-setup
 # Date        : 2025-06-15
 # License     : MIT
 # ---------------------------------------------------------------
 set -e
+
+SCRIPT_URL="https://raw.githubusercontent.com/hamedjafari-ir/gre-tunnel-setup/main/setup-tunnel.sh"
+INSTALL_PATH="/usr/local/bin/tunnel"
+
+function self_update() {
+  if [[ $0 != "$INSTALL_PATH" ]]; then
+    echo "Installing tunnel command..."
+    curl -Ls "$SCRIPT_URL" -o "$INSTALL_PATH"
+    chmod +x "$INSTALL_PATH"
+    echo "You can now run this script anytime using: tunnel"
+    sleep 2
+    exec "$INSTALL_PATH"
+    exit
+  else
+    echo "Checking for script updates..."
+    TMP_SCRIPT=$(mktemp)
+    curl -Ls "$SCRIPT_URL" -o "$TMP_SCRIPT"
+    if ! cmp -s "$TMP_SCRIPT" "$INSTALL_PATH"; then
+      echo "Updating script..."
+      mv "$TMP_SCRIPT" "$INSTALL_PATH"
+      chmod +x "$INSTALL_PATH"
+      echo "Script updated. Restarting..."
+      exec "$INSTALL_PATH"
+    else
+      rm "$TMP_SCRIPT"
+      echo "You already have the latest version."
+    fi
+  fi
+}
 
 function show_loader() {
   local pid=$!
@@ -22,175 +51,131 @@ function show_loader() {
 }
 
 function check_tools() {
-  echo "Checking required tools..."
-  for cmd in ip ping ping6 iptables sshpass; do
-    if ! command -v $cmd >/dev/null 2>&1; then
-      echo "Installing missing tool: $cmd"
-      apt-get update -qq && apt-get install -y -qq $cmd
+  echo "[+] Checking required tools..."
+  for tool in curl ip ssh ping6 ping; do
+    if ! command -v $tool &>/dev/null; then
+      echo "[!] Missing: $tool. Installing..."
+      apt-get update -y && apt-get install -y $tool
     fi
   done
 }
 
 function validate_ssh() {
-  echo "Checking SSH access to Kharej server..."
-  while true; do
-    sshpass -p "$PASS_KHAREJ" ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no -o ConnectTimeout=5 $USER_KHAREJ@$IP_KHAREJ "echo connected" 2>/dev/null | grep -q connected
-    if [ $? -eq 0 ]; then
-      echo "[✓] SSH authentication successful."
-      break
-    else
-      echo "❌ Invalid username or password. Try again."
-      read -p "Kharej Server SSH Username: " USER_KHAREJ
-      read -s -p "Kharej Server SSH Password: " PASS_KHAREJ
-      echo
-    fi
-  done
+  local host=$1
+  local user=$2
+  local pass=$3
+  echo "[+] Validating SSH to $host..."
+  if sshpass -p "$pass" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 $user@$host "echo OK" &>/dev/null; then
+    echo "[✓] SSH connection to $host successful."
+    return 0
+  else
+    echo "[✗] SSH connection to $host failed. Invalid credentials."
+    return 1
+  fi
 }
 
 function setup_manual() {
-  echo "Manual setup selected."
-  echo "Please connect to each server manually and follow the documented step-by-step commands."
-  read -p "Press Enter to return to menu..."
+  echo "Manual mode selected. Please enter commands manually on both servers."
 }
 
-function test_ping() {
-  read -p "Ping direction (1 = Iran -> Kharej, 2 = Kharej -> Iran): " direction
-  if [[ $direction == 1 ]]; then
-    echo "Testing from Iran to Kharej..."
-    ping -c 3 172.20.20.2 && echo "[✓] IPv4 OK" || echo "[✗] IPv4 Failed"
-    ping6 -c 3 fde8:b030:25cf::de02 && echo "[✓] IPv6 OK" || echo "[✗] IPv6 Failed"
-  elif [[ $direction == 2 ]]; then
-    echo "Testing from Kharej to Iran..."
-    read -p "Kharej Server IPv4: " IP_KHAREJ
-    read -p "Username: " USER_KHAREJ
-    read -s -p "Password: " PASS_KHAREJ
-    echo
-    sshpass -p "$PASS_KHAREJ" ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no $USER_KHAREJ@$IP_KHAREJ '
-      ping -c 3 172.20.20.1 && echo "[✓] IPv4 OK" || echo "[✗] IPv4 Failed"
-      ping6 -c 3 fde8:b030:25cf::de01 && echo "[✓] IPv6 OK" || echo "[✗] IPv6 Failed"
-    '
-  else
-    echo "Invalid option."
-  fi
-  read -p "Press Enter to return to menu..."
+function setup_auto() {
+  echo "[+] Starting auto setup..."
+  read -p "Remote Server IPv4: " REMOTE_IPV4
+  read -p "Local Server IPv4: " LOCAL_IPV4
+  read -p "Remote SSH User: " REMOTE_USER
+  read -s -p "Remote SSH Password: " REMOTE_PASS
+  echo
+
+  validate_ssh "$REMOTE_IPV4" "$REMOTE_USER" "$REMOTE_PASS" || setup_auto
+
+  echo "[+] Setting up 6to4 tunnel on local (Iran) server..."
+  ip tunnel add 6to4_To_KH mode sit remote $REMOTE_IPV4 local $LOCAL_IPV4
+  ip -6 addr add fde8:b030:25cf::de01/64 dev 6to4_To_KH
+  ip link set 6to4_To_KH mtu 1480
+  ip link set 6to4_To_KH up
+
+  echo "[+] Configuring remote server..."
+  sshpass -p "$REMOTE_PASS" ssh -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_IPV4 "
+    ip tunnel add 6to4_To_IR mode sit remote $LOCAL_IPV4 local $REMOTE_IPV4 && 
+    ip -6 addr add fde8:b030:25cf::de02/64 dev 6to4_To_IR && 
+    ip link set 6to4_To_IR mtu 1480 && 
+    ip link set 6to4_To_IR up"
+
+  echo "[+] Testing IPv6 connectivity..."
+  ping6 -c 3 fde8:b030:25cf::de02 || { echo "IPv6 tunnel failed."; return; }
+
+  echo "[+] Configuring GRE6 tunnel..."
+  ip -6 tunnel add GRE6Tun_To_KH mode ip6gre remote fde8:b030:25cf::de02 local fde8:b030:25cf::de01
+  ip addr add 172.20.20.1/30 dev GRE6Tun_To_KH
+  ip link set GRE6Tun_To_KH mtu 1436
+  ip link set GRE6Tun_To_KH up
+
+  sshpass -p "$REMOTE_PASS" ssh -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_IPV4 "
+    ip -6 tunnel add GRE6Tun_To_IR mode ip6gre remote fde8:b030:25cf::de01 local fde8:b030:25cf::de02 && 
+    ip addr add 172.20.20.2/30 dev GRE6Tun_To_IR && 
+    ip link set GRE6Tun_To_IR mtu 1436 && 
+    ip link set GRE6Tun_To_IR up"
+
+  echo "[+] Pinging GRE endpoint..."
+  ping -c 3 172.20.20.2 || { echo "GRE tunnel failed."; return; }
+
+  echo "[+] Finalizing setup with IP forwarding..."
+  sysctl -w net.ipv4.ip_forward=1
+  iptables -t nat -A PREROUTING -p tcp --dport 22 -j DNAT --to-destination 172.20.20.1
+  iptables -t nat -A PREROUTING -j DNAT --to-destination 172.20.20.2
+  iptables -t nat -A POSTROUTING -j MASQUERADE
+
+  echo "[✓] Tunnel setup complete and verified."
 }
 
 function restart_server() {
-  echo "Rebooting system..."
+  echo "[!] Server will restart in 5 seconds..."
+  sleep 5
   reboot
 }
 
 function about_script() {
-  clear
-  echo "=================================================="
-  echo " GRE + 6to4 Tunnel Setup Script"
-  echo " Author      : Hamed Jafari"
-  echo " GitHub      : https://github.com/hamedjafari-ir/gre-tunnel-setup"
-  echo " Created on  : 2025-06-15"
-  echo " Description : Automates or guides manual setup of"
-  echo "               IPv6 SIT + GRE tunnels between Iran"
-  echo "               and Kharej servers."
-  echo " License     : MIT"
-  echo "=================================================="
-  read -p "Press Enter to return to menu..."
+  echo "This script sets up a dual 6to4 and GRE6 IPv6 tunnel between two servers."
+  echo "Created by Hamed Jafari - 2025"
 }
 
-function setup_auto() {
-  check_tools
-  echo "[Auto Setup - GRE + 6to4 Tunnel]"
-  read -p "Kharej Server IPv4: " IP_KHAREJ
-  read -p "Kharej Server SSH Username: " USER_KHAREJ
-  read -s -p "Kharej Server SSH Password: " PASS_KHAREJ
-  echo
-  validate_ssh
-  IP_IRAN=$(hostname -I | awk '{print $1}')
-  echo "Detected Iran Server IPv4: $IP_IRAN"
-
-  echo "[1] Setting up 6to4 tunnel on Iran server..."
-  (
-    ip tunnel add 6to4_To_KH mode sit remote $IP_KHAREJ local $IP_IRAN 2>/dev/null || true
-    ip -6 addr add fde8:b030:25cf::de01/64 dev 6to4_To_KH 2>/dev/null || true
-    ip link set 6to4_To_KH mtu 1480
-    ip link set 6to4_To_KH up
-  ) & show_loader
-
-  echo "[2] Setting up 6to4 tunnel on Kharej server..."
-  (
-    sshpass -p "$PASS_KHAREJ" ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no $USER_KHAREJ@$IP_KHAREJ "
-      ip tunnel add 6to4_To_IR mode sit remote $IP_IRAN local $IP_KHAREJ 2>/dev/null || true
-      ip -6 addr add fde8:b030:25cf::de02/64 dev 6to4_To_IR 2>/dev/null || true
-      ip link set 6to4_To_IR mtu 1480
-      ip link set 6to4_To_IR up"
-  ) & show_loader
-
-  echo "[3] Testing IPv6 tunnel from Iran to Kharej..."
-  if ping6 -c 3 fde8:b030:25cf::de02 | grep -q '3 received'; then
-    echo "[✓] IPv6 connectivity verified."
-  else
-    echo "❌ IPv6 tunnel failed. Aborting."
-    exit 1
+function test_ping() {
+  echo "[+] Ping Test Menu"
+  echo "1) From Iran to Foreign"
+  echo "2) From Foreign to Iran"
+  read -p "Choose option: " option
+  if [[ $option == "1" ]]; then
+    echo "Testing from Iran (fde8:b030:25cf::de01 -> fde8:b030:25cf::de02, 172.20.20.1 -> 172.20.20.2)"
+    ping6 -c 3 fde8:b030:25cf::de02 && ping -c 3 172.20.20.2
+  elif [[ $option == "2" ]]; then
+    echo "Testing from Foreign (fde8:b030:25cf::de02 -> fde8:b030:25cf::de01, 172.20.20.2 -> 172.20.20.1)"
+    ping6 -c 3 fde8:b030:25cf::de01 && ping -c 3 172.20.20.1
   fi
-
-  echo "[4] Setting up GRE6 tunnel on Iran server..."
-  (
-    ip -6 tunnel add GRE6Tun_To_KH mode ip6gre remote fde8:b030:25cf::de02 local fde8:b030:25cf::de01 2>/dev/null || true
-    ip addr add 172.20.20.1/30 dev GRE6Tun_To_KH
-    ip link set GRE6Tun_To_KH mtu 1436
-    ip link set GRE6Tun_To_KH up
-  ) & show_loader
-
-  echo "[5] Setting up GRE6 tunnel on Kharej server..."
-  (
-    sshpass -p "$PASS_KHAREJ" ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no $USER_KHAREJ@$IP_KHAREJ "
-      ip -6 tunnel add GRE6Tun_To_IR mode ip6gre remote fde8:b030:25cf::de01 local fde8:b030:25cf::de02 2>/dev/null || true
-      ip addr add 172.20.20.2/30 dev GRE6Tun_To_IR
-      ip link set GRE6Tun_To_IR mtu 1436
-      ip link set GRE6Tun_To_IR up"
-  ) & show_loader
-
-  echo "[6] Testing GRE IPv4 tunnel..."
-  if ping -c 3 172.20.20.2 | grep -q '3 received'; then
-    echo "[✓] GRE tunnel is working."
-  else
-    echo "❌ GRE tunnel failed. Aborting."
-    exit 1
-  fi
-
-  echo "[7] Enabling NAT and IP forwarding on Iran server..."
-  (
-    sysctl -w net.ipv4.ip_forward=1
-    iptables -t nat -A PREROUTING -p tcp --dport 22 -j DNAT --to-destination 172.20.20.1
-    iptables -t nat -A PREROUTING -j DNAT --to-destination 172.20.20.2
-    iptables -t nat -A POSTROUTING -j MASQUERADE
-  ) & show_loader
-
-  echo -e "\n✅ Tunnel has been successfully established."
-  read -p "Press Enter to return to menu..."
 }
 
 function menu() {
   while true; do
-    clear
-    echo "========= GRE + 6to4 Tunnel Setup Script ========="
-    echo "1. Automatic Tunnel Setup (Iran to Kharej)"
-    echo "2. Manual Setup Guide"
-    echo "3. Restart Server"
-    echo "4. Ping Test"
-    echo "5. About This Script"
-    echo "6. Exit"
-    echo "=================================================="
-    read -p "Select an option: " choice
-
-    case $choice in
-      1) setup_auto ;;
-      2) setup_manual ;;
-      3) restart_server ;;
-      4) test_ping ;;
-      5) about_script ;;
-      6) exit ;;
-      *) echo "Invalid option"; sleep 1 ;;
+    echo "
+========= GRE6 Tunnel Setup Menu ========="
+    echo "1) Auto Setup Tunnel"
+    echo "2) Manual Setup"
+    echo "3) Test Ping"
+    echo "4) Restart Server"
+    echo "5) About This Script"
+    echo "6) Exit"
+    read -p "Choose an option: " CHOICE
+    case $CHOICE in
+      1) setup_auto;;
+      2) setup_manual;;
+      3) test_ping;;
+      4) restart_server;;
+      5) about_script;;
+      6) exit 0;;
+      *) echo "Invalid option.";;
     esac
   done
 }
 
+self_update
+check_tools
 menu
