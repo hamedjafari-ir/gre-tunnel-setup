@@ -11,6 +11,7 @@ set -e
 
 SCRIPT_URL="https://raw.githubusercontent.com/hamedjafari-ir/gre-tunnel-setup/main/setup-tunnel.sh"
 INSTALL_PATH="/usr/local/bin/tunnel"
+STATUS_FILE="/tmp/tunnel_status"
 
 function self_update() {
   if [[ $0 != "$INSTALL_PATH" ]]; then
@@ -40,7 +41,7 @@ function self_update() {
 
 function show_loader() {
   local pid=$!
-  local spin='-\|/'
+  local spin='-/|\\'
   local i=0
   while kill -0 $pid 2>/dev/null; do
     i=$(( (i+1) %4 ))
@@ -52,7 +53,7 @@ function show_loader() {
 
 function check_tools() {
   echo "[+] Checking required tools..."
-  for tool in curl ip ssh ping6 ping; do
+  for tool in curl ip ssh sshpass ping6 ping; do
     if ! command -v $tool &>/dev/null; then
       echo "[!] Missing: $tool. Installing..."
       apt-get update -y && apt-get install -y $tool
@@ -89,6 +90,7 @@ function setup_auto() {
   validate_ssh "$REMOTE_IPV4" "$REMOTE_USER" "$REMOTE_PASS" || setup_auto
 
   echo "[+] Setting up 6to4 tunnel on local (Iran) server..."
+  ip tunnel del 6to4_To_KH 2>/dev/null || true
   ip tunnel add 6to4_To_KH mode sit remote $REMOTE_IPV4 local $LOCAL_IPV4
   ip -6 addr add fde8:b030:25cf::de01/64 dev 6to4_To_KH
   ip link set 6to4_To_KH mtu 1480
@@ -96,28 +98,44 @@ function setup_auto() {
 
   echo "[+] Configuring remote server..."
   sshpass -p "$REMOTE_PASS" ssh -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_IPV4 "
+    ip tunnel del 6to4_To_IR 2>/dev/null || true
     ip tunnel add 6to4_To_IR mode sit remote $LOCAL_IPV4 local $REMOTE_IPV4 && 
     ip -6 addr add fde8:b030:25cf::de02/64 dev 6to4_To_IR && 
     ip link set 6to4_To_IR mtu 1480 && 
     ip link set 6to4_To_IR up"
 
   echo "[+] Testing IPv6 connectivity..."
-  ping6 -c 3 fde8:b030:25cf::de02 || { echo "IPv6 tunnel failed."; return; }
+  if ping6 -c 3 fde8:b030:25cf::de02 &>/dev/null; then
+    echo "[✓] IPv6 tunnel active."
+  else
+    echo "[✗] IPv6 ping failed. Aborting."
+    echo "disconnected" > "$STATUS_FILE"
+    return
+  fi
 
   echo "[+] Configuring GRE6 tunnel..."
+  ip -6 tunnel del GRE6Tun_To_KH 2>/dev/null || true
   ip -6 tunnel add GRE6Tun_To_KH mode ip6gre remote fde8:b030:25cf::de02 local fde8:b030:25cf::de01
   ip addr add 172.20.20.1/30 dev GRE6Tun_To_KH
   ip link set GRE6Tun_To_KH mtu 1436
   ip link set GRE6Tun_To_KH up
 
   sshpass -p "$REMOTE_PASS" ssh -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_IPV4 "
+    ip -6 tunnel del GRE6Tun_To_IR 2>/dev/null || true
     ip -6 tunnel add GRE6Tun_To_IR mode ip6gre remote fde8:b030:25cf::de01 local fde8:b030:25cf::de02 && 
     ip addr add 172.20.20.2/30 dev GRE6Tun_To_IR && 
     ip link set GRE6Tun_To_IR mtu 1436 && 
     ip link set GRE6Tun_To_IR up"
 
   echo "[+] Pinging GRE endpoint..."
-  ping -c 3 172.20.20.2 || { echo "GRE tunnel failed."; return; }
+  if ping -c 3 172.20.20.2 &>/dev/null; then
+    echo "[✓] GRE tunnel active."
+    echo "connected" > "$STATUS_FILE"
+  else
+    echo "[✗] GRE tunnel failed."
+    echo "disconnected" > "$STATUS_FILE"
+    return
+  fi
 
   echo "[+] Finalizing setup with IP forwarding..."
   sysctl -w net.ipv4.ip_forward=1
@@ -140,6 +158,10 @@ function about_script() {
 }
 
 function test_ping() {
+  if [[ ! -f "$STATUS_FILE" || $(cat $STATUS_FILE) != "connected" ]]; then
+    echo "[!] Tunnel not active. Please run auto setup first."
+    return
+  fi
   echo "[+] Ping Test Menu"
   echo "1) From Iran to Foreign"
   echo "2) From Foreign to Iran"
@@ -155,8 +177,11 @@ function test_ping() {
 
 function menu() {
   while true; do
-    echo "
-========= GRE6 Tunnel Setup Menu ========="
+    STATUS=""
+    if [[ -f "$STATUS_FILE" && $(cat $STATUS_FILE) == "connected" ]]; then
+      STATUS=" [CONNECTED]"
+    fi
+    echo -e "\n========= GRE6 Tunnel Setup Menu$STATUS ========="
     echo "1) Auto Setup Tunnel"
     echo "2) Manual Setup"
     echo "3) Test Ping"
