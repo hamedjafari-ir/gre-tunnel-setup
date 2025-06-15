@@ -4,7 +4,6 @@ A fully automated and interactive Bash script that creates a GRE6 + 6to4 tunnel 
 
 ---
 
-## 🌐 دو زبانه / Bilingual Instructions
 
 🇬🇧 **English** | 🇮🇷 **فارسی**
 
