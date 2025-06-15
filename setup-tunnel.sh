@@ -53,7 +53,7 @@ function show_loader() {
 
 function check_tools() {
   echo "[+] Checking required tools..."
-  for tool in curl ip ssh sshpass ping6 ping; do
+  for tool in curl ip ssh sshpass ping6 ping iptables; do
     if ! command -v $tool &>/dev/null; then
       echo "[!] Missing: $tool. Installing..."
       apt-get update -y && apt-get install -y $tool
@@ -72,6 +72,25 @@ function validate_ssh() {
   else
     echo "[✗] SSH connection to $host failed. Invalid credentials."
     return 1
+  fi
+}
+
+function check_tunnel_status() {
+  echo "[+] Checking GRE6 tunnel connectivity..."
+  if ping -c 2 172.20.20.2 &>/dev/null; then
+    echo "[✓] GRE6 tunnel is up."
+  else
+    echo "[✗] GRE6 tunnel seems down."
+  fi
+}
+
+function test_target_reachability() {
+  read -p "Enter target IPv4 to check if filtered: " target_ip
+  echo "[+] Pinging $target_ip..."
+  if ping -c 3 $target_ip &>/dev/null; then
+    echo "[✓] $target_ip is reachable."
+  else
+    echo "[✗] $target_ip is filtered or unreachable."
   fi
 }
 
@@ -187,7 +206,9 @@ function menu() {
     echo "3) Test Ping"
     echo "4) Restart Server"
     echo "5) About This Script"
-    echo "6) Exit"
+    echo "6) Check GRE Tunnel Status"
+    echo "7) Check Target IP Reachability"
+    echo "8) Exit"
     read -p "Choose an option: " CHOICE
     case $CHOICE in
       1) setup_auto;;
@@ -195,7 +216,9 @@ function menu() {
       3) test_ping;;
       4) restart_server;;
       5) about_script;;
-      6) exit 0;;
+      6) check_tunnel_status;;
+      7) test_target_reachability;;
+      8) exit 0;;
       *) echo "Invalid option.";;
     esac
   done
