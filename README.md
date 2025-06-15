@@ -4,43 +4,67 @@ A fully automated and interactive Bash script that creates a GRE6 + 6to4 tunnel 
 
 ---
 
-### 🚀 Quick Start
+## 🌐 دو زبانه / Bilingual Instructions
 
-To install and run the script:
+🇬🇧 **English** | 🇮🇷 **فارسی**
+
+---
+
+### 🚀 Quick Start / شروع سریع
 
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/hamedjafari-ir/gre-tunnel-setup/main/setup-tunnel.sh)
 ```
 
-This will download, install, and run the script under `/usr/local/bin/tunnel`. From that point onward, you can simply run:
+🇬🇧 This command will install the tunnel script and run it.
+🇮🇷 این دستور اسکریپت را نصب و اجرا می‌کند.
+
+After installation:
 
 ```bash
 tunnel
 ```
 
+🇬🇧 From now on, run `tunnel` to launch the script.
+🇮🇷 از این به بعد با زدن دستور `tunnel` اسکریپت اجرا می‌شود.
+
 ---
 
-### 📜 Menu Options Explained
-
-Each option in the interactive menu has an explanation below:
+### 📜 Menu Options Explained / توضیح منو
 
 ```
 ========= GRE6 Tunnel Setup Menu =========
-1) Auto Setup Tunnel             # راه‌اندازی خودکار تونل بین دو سرور با اس اس اچ و تنظیم کامل
-2) Manual Setup                  # راه‌اندازی دستی برای کاربران پیشرفته
-3) Test Ping                     # بررسی پینگ از ایران به خارج و برعکس از طریق GRE و IPv6
-4) Restart Server                # ری‌استارت کامل سیستم فعلی (با تأخیر 5 ثانیه)
-5) About This Script             # اطلاعات درباره اسکریپت و نویسنده
-6) Check GRE Tunnel Status       # بررسی فعال بودن تونل GRE و تست اتصال
-7) Check Target IP Reachability  # بررسی فیلتر بودن یا دردسترس بودن یک IP خارجی خاص
-8) Exit                          # خروج از منو
+1) Auto Setup Tunnel              # 🇬🇧 Auto setup between two servers via SSH
+                                 # 🇮🇷 راه‌اندازی خودکار تونل بین دو سرور
+
+2) Manual Setup                  # 🇬🇧 Advanced users can manually configure
+                                 # 🇮🇷 حالت دستی برای کاربران حرفه‌ای
+
+3) Test Ping                     # 🇬🇧 Test ping from Iran <-> Foreign
+                                 # 🇮🇷 بررسی پینگ از ایران به خارج و بالعکس
+
+4) Restart Server                # 🇬🇧 Restart current server after delay
+                                 # 🇮🇷 ریستارت سرور با تأخیر 5 ثانیه
+
+5) About This Script             # 🇬🇧 Information about the script and author
+                                 # 🇮🇷 معرفی اسکریپت و نویسنده
+
+6) Check GRE Tunnel Status       # 🇬🇧 Check GRE status and tunnel connection
+                                 # 🇮🇷 بررسی وضعیت تونل GRE
+
+7) Check Target IP Reachability  # 🇬🇧 Check if a foreign IP is reachable
+                                 # 🇮🇷 بررسی فیلتر بودن یا نبودن یک IP خارجی
+
+8) Exit                          # 🇬🇧 Exit the menu
+                                 # 🇮🇷 خروج از منو
 ```
 
 ---
 
-### 🔧 Requirements (نصب ابزارهای موردنیاز)
+### 🔧 Requirements / پیش‌نیازها
 
-در صورت نبود ابزارهای زیر، اسکریپت به‌صورت خودکار آن‌ها را نصب می‌کند:
+🇬🇧 The script automatically installs required tools if missing:
+🇮🇷 اگر ابزارهای موردنیاز نصب نباشند، اسکریپت آن‌ها را نصب می‌کند:
 
 * `curl`
 * `ip`
@@ -50,33 +74,42 @@ Each option in the interactive menu has an explanation below:
 
 ---
 
-### 🔄 Self-Update Feature
+### 🔄 Self-Update / به‌روزرسانی خودکار
 
-این اسکریپت در هر بار اجرا به‌صورت خودکار خودش را از GitHub به‌روزرسانی می‌کند، بنابراین همیشه آخرین نسخه را در اختیار دارید.
-
----
-
-### 🧪 Tunnel Check and Status
-
-اگر تونل با موفقیت راه‌اندازی شده باشد:
-
-* در منوی بالا کنار عنوان، وضعیت `[CONNECTED]` نمایش داده می‌شود.
-* گزینه‌ی 6 امکان بررسی فعال بودن GRE را دارد.
-* گزینه‌ی 7 بررسی می‌کند که IP خاصی از داخل فیلتر است یا خیر.
+🇬🇧 The script checks GitHub and updates itself every time it runs.
+🇮🇷 اسکریپت در هر بار اجرا خودش را از گیت‌هاب به‌روز می‌کند.
 
 ---
 
-### 📌 Developer
+### 🧪 Tunnel Status / وضعیت تونل
+
+* 🇬🇧 If tunnel is active, `[CONNECTED]` appears in the menu header.
+
+* 🇮🇷 اگر تونل فعال باشد، در منوی بالا وضعیت `[CONNECTED]` نمایش داده می‌شود.
+
+* 🇬🇧 Option 6 checks GRE tunnel health.
+
+* 🇮🇷 گزینه 6 بررسی فعال بودن GRE است.
+
+* 🇬🇧 Option 7 tests if a foreign IP is filtered or not.
+
+* 🇮🇷 گزینه 7 بررسی می‌کند که IP خاصی فیلتر هست یا خیر.
+
+---
+
+### 👨‍💻 Developer
 
 * Author: **Hamed Jafari**
 * GitHub: [hamedjafari-ir](https://github.com/hamedjafari-ir)
 
-For support or issues, please open an [Issue](https://github.com/hamedjafari-ir/gre-tunnel-setup/issues).
+🇬🇧 For issues, open an [Issue](https://github.com/hamedjafari-ir/gre-tunnel-setup/issues).
+🇮🇷 برای پشتیبانی، یک Issue در GitHub باز کنید.
 
 ---
 
-### 📜 License
+### 📜 License / مجوز
 
 MIT License
 
-> This script was built to simplify tunnel creation between restricted networks and provide seamless IPv6 and GRE tunneling automation.
+> 🇬🇧 This script simplifies GRE+IPv6 tunnel setup for restricted networks.
+> 🇮🇷 این اسکریپت راه‌اندازی تونل GRE+IPv6 را در شبکه‌های محدود آسان می‌کند.
